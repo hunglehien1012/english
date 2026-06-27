@@ -699,6 +699,25 @@
     .topbar { padding: 12px; }
   }
 
+  /* SUPABASE STATUS BAR */
+  .sb-status-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 20px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    font-size: 11px; color: var(--text3);
+  }
+  .sb-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--text3); flex-shrink: 0;
+  }
+  .sb-dot.online { background: var(--green); box-shadow: 0 0 0 3px rgba(62,207,142,0.2); }
+  .sb-dot.syncing { background: var(--amber); animation: pulse-dot 1s infinite; }
+  .sb-dot.error { background: var(--red); }
+  @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .sb-spinner { width: 12px; height: 12px; border: 2px solid var(--border2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; }
+
 </style>
 </head>
 <body>
@@ -785,7 +804,57 @@
       </button>
       <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)">
     </div>
-    <!-- VOCAB PANEL -->
+
+    <!-- SUPABASE STATUS BAR -->
+    <div class="sb-status-bar" id="sbStatusBar">
+      <div class="sb-dot" id="sbDot"></div>
+      <span id="sbStatusText">Not connected to Supabase</span>
+      <button onclick="showSbSetup()" style="margin-left:auto;background:none;border:none;color:var(--accent2);font-size:11px;cursor:pointer;padding:0;font-family:inherit;font-weight:500">⚙ Configure</button>
+    </div>
+
+    <!-- SUPABASE SETUP MODAL -->
+    <div id="sbSetupOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:300;align-items:center;justify-content:center;padding:20px">
+      <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:16px;padding:28px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+          <div style="font-size:17px;font-weight:600">🔌 Connect Supabase</div>
+          <button onclick="hideSbSetup()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:20px;padding:0;line-height:1">×</button>
+        </div>
+        <div style="font-size:13px;color:var(--text2);margin-bottom:18px;line-height:1.7;background:var(--bg3);border-radius:var(--radius-sm);padding:12px 14px">
+          <strong style="color:var(--text)">Quick setup:</strong><br>
+          1. Go to <a href="https://supabase.com" target="_blank" style="color:var(--accent2)">supabase.com</a> → create a free project<br>
+          2. Go to <strong>Settings → API</strong> → copy <em>Project URL</em> and <em>anon key</em><br>
+          3. Go to <strong>SQL Editor</strong> → run the SQL below<br>
+          4. Paste into the form and click <strong>Save & Connect</strong>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:16px;font-family:monospace;font-size:11px;color:var(--text2);white-space:pre-wrap;user-select:all;line-height:1.8">create table if not exists englishvault (
+  id text primary key default 'shared',
+  vocab jsonb default '[]',
+  structs jsonb default '[]',
+  topics jsonb default '[]',
+  updated_at timestamptz default now()
+);
+alter table englishvault enable row level security;
+create policy "allow all" on englishvault for all using (true) with check (true);
+insert into englishvault (id) values ('shared') on conflict do nothing;</div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
+          <div>
+            <label style="display:block;font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Project URL *</label>
+            <input id="sbUrlInput" class="form-input" type="text" placeholder="https://xxxxxxxxxxxx.supabase.co" style="font-size:13px">
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Anon Key *</label>
+            <input id="sbKeyInput" class="form-input" type="text" placeholder="eyJhbGciOiJIUzI1NiIs..." style="font-size:13px">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn btn-ghost" onclick="hideSbSetup()">Cancel</button>
+          <button class="btn btn-primary" onclick="saveSbConfig()">
+            <span id="sbSaveLabel">Save & Connect</span>
+          </button>
+        </div>
+        <div id="sbSetupMsg" style="margin-top:12px;font-size:12px;display:none"></div>
+      </div>
+    </div>
     <div class="panel active" id="panel-vocab">
       <div class="topbar">
         <div class="page-title">Vocabulary <span id="vocab-count-label">0 words</span></div>
@@ -1054,8 +1123,159 @@ function getTenseStructs() {
 }
 
 // ─── STORAGE ─────────────────────────────────────────
+// ─── SUPABASE INTEGRATION ────────────────────────────
+let sbClient = null;
+let sbSaveTimeout = null;
+
+function getSbConfig() {
+  try { const r = localStorage.getItem('englishvault_sb'); return r ? JSON.parse(r) : null; } catch(e) { return null; }
+}
+function setSbConfig(url, key) {
+  localStorage.setItem('englishvault_sb', JSON.stringify({ url, key }));
+}
+function setSbStatus(state, text) {
+  const dot = document.getElementById('sbDot');
+  const label = document.getElementById('sbStatusText');
+  if (!dot || !label) return;
+  dot.className = 'sb-dot' + (state ? ' ' + state : '');
+  label.innerHTML = text;
+}
+function showSbSetup() {
+  const overlay = document.getElementById('sbSetupOverlay');
+  overlay.style.display = 'flex';
+  const cfg = getSbConfig();
+  if (cfg) {
+    document.getElementById('sbUrlInput').value = cfg.url || '';
+    document.getElementById('sbKeyInput').value = cfg.key || '';
+  }
+}
+function hideSbSetup() {
+  document.getElementById('sbSetupOverlay').style.display = 'none';
+  document.getElementById('sbSetupMsg').style.display = 'none';
+}
+function showSbMsg(html, color) {
+  const msg = document.getElementById('sbSetupMsg');
+  msg.innerHTML = html; msg.style.color = color; msg.style.display = 'block';
+}
+async function sbFetch(url, key, opts = {}) {
+  return fetch(url, { ...opts, headers: { 'apikey': key, 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation', ...(opts.headers || {}) } });
+}
+async function saveSbConfig() {
+  const url = document.getElementById('sbUrlInput').value.trim().replace(/\/$/, '');
+  const key = document.getElementById('sbKeyInput').value.trim();
+  const btn = document.getElementById('sbSaveLabel');
+  if (!url || !key) { showSbMsg('⚠ Please enter both URL and Key.', 'var(--amber)'); return; }
+  btn.innerHTML = '<span class="sb-spinner"></span> Connecting...';
+  document.getElementById('sbSetupMsg').style.display = 'none';
+  try {
+    const res = await sbFetch(`${url}/rest/v1/englishvault?id=eq.shared&select=id`, key);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    setSbConfig(url, key);
+    btn.textContent = 'Save & Connect';
+    showSbMsg('✓ Connected! Loading data...', 'var(--green)');
+    setTimeout(async () => { hideSbSetup(); await initSupabase(); }, 800);
+  } catch(e) {
+    btn.textContent = 'Save & Connect';
+    showSbMsg('✗ Error: ' + e.message + '<br><small>Check URL, Key, and that you ran the SQL.</small>', 'var(--red)');
+  }
+}
+async function sbPushData() {
+  const cfg = getSbConfig();
+  if (!cfg) return;
+  const defStructIds = getDefaultStructs().map(s => s.id);
+  const defTopicIds = DEFAULT_TOPICS.map(t => t.id);
+  const payload = {
+    vocab: data.vocab,
+    structs: data.structs.filter(s => !defStructIds.includes(s.id)),
+    topics: data.topics.filter(t => !defTopicIds.includes(t.id)),
+    updated_at: new Date().toISOString()
+  };
+  try {
+    const res = await sbFetch(`${cfg.url}/rest/v1/englishvault?id=eq.shared`, cfg.key, { method: 'PATCH', body: JSON.stringify(payload) });
+    const json = await res.json();
+    if (!json || json.length === 0) {
+      await sbFetch(`${cfg.url}/rest/v1/englishvault`, cfg.key, { method: 'POST', body: JSON.stringify({ id: 'shared', ...payload }) });
+    }
+  } catch(e) { console.error('sbPush error:', e); setSbStatus('error', '⚠ Sync error: ' + e.message); }
+}
+function sbDebouncedSave() {
+  setSbStatus('syncing', '<span class="sb-spinner"></span> Saving...');
+  clearTimeout(sbSaveTimeout);
+  sbSaveTimeout = setTimeout(async () => {
+    await sbPushData();
+    setSbStatus('online', '🟢 Live — changes sync in real-time');
+  }, 800);
+}
+function mergeRemoteData(remote) {
+  const defStructIds = getDefaultStructs().map(s => s.id);
+  const defTopicIds = DEFAULT_TOPICS.map(t => t.id);
+  if (Array.isArray(remote.vocab)) {
+    remote.vocab.forEach(rv => {
+      const idx = data.vocab.findIndex(v => v.id === rv.id);
+      if (idx === -1) data.vocab.unshift(rv);
+      else data.vocab[idx] = rv;
+    });
+    const remoteIds = remote.vocab.map(v => v.id);
+    const defVocabIds = DEFAULT_VOCAB.map(v => v.id);
+    data.vocab = data.vocab.filter(v => defVocabIds.includes(v.id) || remoteIds.includes(v.id));
+  }
+  if (Array.isArray(remote.structs)) {
+    remote.structs.forEach(rs => {
+      if (!defStructIds.includes(rs.id)) {
+        const idx = data.structs.findIndex(s => s.id === rs.id);
+        if (idx === -1) data.structs.push(rs); else data.structs[idx] = rs;
+      }
+    });
+    const remoteStructIds = remote.structs.map(s => s.id);
+    data.structs = data.structs.filter(s => defStructIds.includes(s.id) || remoteStructIds.includes(s.id));
+  }
+  if (Array.isArray(remote.topics)) {
+    remote.topics.forEach(rt => {
+      if (!defTopicIds.includes(rt.id)) {
+        const idx = data.topics.findIndex(t => t.id === rt.id);
+        if (idx === -1) data.topics.push(rt); else data.topics[idx] = rt;
+      }
+    });
+    const remoteTopicIds = remote.topics.map(t => t.id);
+    data.topics = data.topics.filter(t => defTopicIds.includes(t.id) || remoteTopicIds.includes(t.id));
+  }
+  try { localStorage.setItem('englishvault_data', JSON.stringify({ vocab: data.vocab, structs: data.structs, topics: data.topics })); } catch(e) {}
+  renderAll();
+}
+async function initSupabase() {
+  const cfg = getSbConfig();
+  if (!cfg || !cfg.url || !cfg.key) {
+    setSbStatus('', 'Not connected — <button onclick="showSbSetup()" style="background:none;border:none;color:var(--accent2);font-size:11px;cursor:pointer;padding:0;font-family:inherit;font-weight:500">Configure Supabase</button>');
+    return;
+  }
+  setSbStatus('syncing', '<span class="sb-spinner"></span> Connecting...');
+  try {
+    const res = await sbFetch(`${cfg.url}/rest/v1/englishvault?id=eq.shared&select=vocab,structs,topics,updated_at`, cfg.key);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    if (rows && rows.length > 0) mergeRemoteData(rows[0]);
+    else await sbPushData();
+    setSbStatus('online', '🟢 Live — changes sync in real-time');
+    // Poll every 5s for changes from other users
+    let lastUpdated = null;
+    setInterval(async () => {
+      try {
+        const r = await sbFetch(`${cfg.url}/rest/v1/englishvault?id=eq.shared&select=vocab,structs,topics,updated_at`, cfg.key);
+        if (!r.ok) return;
+        const rows = await r.json();
+        if (!rows || !rows.length) return;
+        if (rows[0].updated_at !== lastUpdated) { lastUpdated = rows[0].updated_at; mergeRemoteData(rows[0]); }
+      } catch(e) {}
+    }, 5000);
+  } catch(e) {
+    setSbStatus('error', '✗ Connection error: ' + e.message + ' — <button onclick="showSbSetup()" style="background:none;border:none;color:var(--accent2);font-size:11px;cursor:pointer;padding:0;font-family:inherit;font-weight:500">Retry</button>');
+  }
+}
+
 function saveData() {
   try { localStorage.setItem('englishvault_data', JSON.stringify(data)); } catch(e) {}
+  const cfg = getSbConfig();
+  if (cfg && cfg.url && cfg.key) sbDebouncedSave();
 }
 
 const DEFAULT_TOPICS = [
@@ -1118,31 +1338,19 @@ function loadData() {
     if (s) data = JSON.parse(s);
   } catch(e) {}
 
-  // Always ensure all default topics exist (merge, don't overwrite)
   if (!data.topics) data.topics = [];
   DEFAULT_TOPICS.forEach(dt => {
     if (!data.topics.find(t => t.id === dt.id)) data.topics.push(dt);
-    else {
-      // Update name/color in case it changed
-      const existing = data.topics.find(t => t.id === dt.id);
-      existing.name = dt.name;
-      existing.color = dt.color;
-    }
+    else { const e = data.topics.find(t => t.id === dt.id); e.name = dt.name; e.color = dt.color; }
   });
 
-  // Always ensure all default structs exist (merge by id)
   if (!data.structs) data.structs = [];
-  getDefaultStructs().forEach(ds => {
-    if (!data.structs.find(s => s.id === ds.id)) data.structs.push(ds);
-  });
+  getDefaultStructs().forEach(ds => { if (!data.structs.find(s => s.id === ds.id)) data.structs.push(ds); });
 
-  // Always ensure all default vocab exist (merge by id)
   if (!data.vocab) data.vocab = [];
-  DEFAULT_VOCAB.forEach(dv => {
-    if (!data.vocab.find(v => v.id === dv.id)) data.vocab.push(dv);
-  });
+  DEFAULT_VOCAB.forEach(dv => { if (!data.vocab.find(v => v.id === dv.id)) data.vocab.push(dv); });
 
-  saveData();
+  try { localStorage.setItem('englishvault_data', JSON.stringify({ vocab: data.vocab, structs: data.structs, topics: data.topics })); } catch(e) {}
 }
 
 // ─── HELPERS ─────────────────────────────────────────
@@ -2247,6 +2455,7 @@ loadData();
 renderAll();
 applyTheme();
 initMobileUI();
+initSupabase();
 
 // ── Nav touch handling ──
 (function() {
