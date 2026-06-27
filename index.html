@@ -699,6 +699,24 @@
     .topbar { padding: 12px; }
   }
 
+  .pill-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    display: inline-block; flex-shrink: 0;
+  }
+
+  .quiz-topic-pill.active {
+    color: var(--text);
+    border-color: var(--pill-color, var(--accent));
+    box-shadow: inset 0 0 0 1px var(--pill-color, var(--accent));
+    opacity: 1;
+  }
+  .quiz-topic-pill.active[data-id="all"] {
+    background: var(--accent-bg);
+    color: var(--accent2);
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
   /* SUPABASE STATUS BAR */
   .sb-status-bar {
     display: flex; align-items: center; gap: 8px;
@@ -1535,9 +1553,37 @@ function renderTopics() {
 }
 
 // ─── QUIZ ─────────────────────────────────────────────
+function getSelectedQuizTopics() {
+  return [...document.querySelectorAll('.quiz-topic-pill.active')].map(el => el.dataset.id);
+}
+
+function toggleQuizTopic(id, el) {
+  if (id === 'all') {
+    // Select All → deselect every individual topic
+    document.querySelectorAll('.quiz-topic-pill').forEach(p => p.classList.remove('active'));
+    el.classList.add('active');
+    return;
+  }
+  // Deselect "All" pill when picking specific topics
+  const allPill = document.querySelector('.quiz-topic-pill[data-id="all"]');
+  if (allPill) allPill.classList.remove('active');
+  el.classList.toggle('active');
+  // If nothing selected, fall back to "All"
+  const anyActive = [...document.querySelectorAll('.quiz-topic-pill')].some(p => p.classList.contains('active'));
+  if (!anyActive && allPill) allPill.classList.add('active');
+}
+
 function renderQuizSetup() {
-  const topicOpts = [{ id: 'all', name: 'All Topics' }, ...data.topics]
-    .map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  const topicPills = [{ id: 'all', name: 'All Topics', color: null }, ...data.topics].map(t => {
+    const isAll = t.id === 'all';
+    return `<span class="quiz-topic-pill topic-pill ${isAll ? 'active' : ''}"
+      data-id="${t.id}"
+      style="${t.color ? `--pill-color:${t.color}` : ''}"
+      onclick="toggleQuizTopic('${t.id}', this)">
+      ${t.color ? `<span class="pill-dot" style="background:${t.color}"></span>` : ''}
+      ${t.name}
+    </span>`;
+  }).join('');
 
   document.getElementById('quizContent').innerHTML = `
     <div class="quiz-setup">
@@ -1545,8 +1591,8 @@ function renderQuizSetup() {
       <p style="color:var(--text2);margin-bottom:28px;font-size:14px">Choose a quiz type and start practicing</p>
 
       <div style="margin-bottom:20px">
-        <div class="form-label">Select Topic</div>
-        <select class="form-select" id="quiz-topic-select" style="max-width:320px">${topicOpts}</select>
+        <div class="form-label" style="margin-bottom:8px">Select Topics <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">(one or more)</span></div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px" id="quizTopicPills">${topicPills}</div>
       </div>
 
       <div class="form-label" style="margin-bottom:10px">Quiz Type</div>
@@ -1702,23 +1748,28 @@ function generateSyllableMask(phrase) {
 }
 
 function startQuiz() {
-  const topicSel = document.getElementById('quiz-topic-select').value;
+  const selectedTopics = getSelectedQuizTopics();
+  const isAll = selectedTopics.includes('all') || selectedTopics.length === 0;
   const mode = quizState.mode;
+
+  function topicMatch(item) {
+    if (isAll) return true;
+    return selectedTopics.includes(item.topic);
+  }
 
   let pool = [];
   if (mode === 'struct') {
-    pool = topicSel === 'all' ? [...data.structs] : data.structs.filter(s => s.topic === topicSel);
+    pool = data.structs.filter(topicMatch);
     if (pool.length < 2) { alert('You need at least 2 structures to start a quiz!'); return; }
   } else if (mode === 'syllable') {
-    // Only include vocab where at least ONE word in the phrase has 2+ syllables
-    const raw = topicSel === 'all' ? [...data.vocab] : data.vocab.filter(v => v.topic === topicSel);
+    const raw = data.vocab.filter(topicMatch);
     pool = raw.filter(v => {
       const words = v.word.split(/[\s/]+/).map(w => w.replace(/[^a-zA-Z]/g,''));
       return words.some(w => w.length > 0 && countSyllables(w) >= 2);
     });
     if (pool.length < 1) { alert('No eligible words found (need at least 1 word with ≥ 2 syllables). Please add more words!'); return; }
   } else {
-    pool = topicSel === 'all' ? [...data.vocab] : data.vocab.filter(v => v.topic === topicSel);
+    pool = data.vocab.filter(topicMatch);
     if (pool.length < 2) { alert('You need at least 2 vocabulary words to start a quiz!'); return; }
   }
 
@@ -1759,7 +1810,7 @@ function startQuiz() {
     return { item, type: 'choice', choices, questionLabel, correctLabel };
   }).filter(Boolean);
 
-  quizState = { mode, topic: topicSel, questions, current: 0, score: 0, answered: false, wrongItems: [] };
+  quizState = { mode, topics: selectedTopics, questions, current: 0, score: 0, answered: false, wrongItems: [] };
   renderQuizQuestion();
 }
 
@@ -1985,23 +2036,28 @@ function toggleMeaningVisibility() {
 }
 
 function retryQuiz() {
-  // Reuse the same mode and topic from the previous round
   const savedMode = quizState.mode;
-  const savedTopic = quizState.topic;
+  const savedTopics = quizState.topics || ['all'];
+  const isAll = savedTopics.includes('all') || savedTopics.length === 0;
+
+  function topicMatch(item) {
+    if (isAll) return true;
+    return savedTopics.includes(item.topic);
+  }
 
   let pool = [];
   if (savedMode === 'struct') {
-    pool = savedTopic === 'all' ? [...data.structs] : data.structs.filter(s => s.topic === savedTopic);
+    pool = data.structs.filter(topicMatch);
     if (pool.length < 2) { alert('You need at least 2 structures!'); return; }
   } else if (savedMode === 'syllable') {
-    const raw = savedTopic === 'all' ? [...data.vocab] : data.vocab.filter(v => v.topic === savedTopic);
+    const raw = data.vocab.filter(topicMatch);
     pool = raw.filter(v => {
       const words = v.word.split(/[\s/]+/).map(w => w.replace(/[^a-zA-Z]/g,''));
       return words.some(w => w.length > 0 && countSyllables(w) >= 2);
     });
     if (pool.length < 1) { alert('Not enough words to practice!'); return; }
   } else {
-    pool = savedTopic === 'all' ? [...data.vocab] : data.vocab.filter(v => v.topic === savedTopic);
+    pool = data.vocab.filter(topicMatch);
     if (pool.length < 2) { alert('You need at least 2 vocabulary words!'); return; }
   }
 
@@ -2028,7 +2084,7 @@ function retryQuiz() {
     return { item, type: 'choice', choices, questionLabel, correctLabel };
   }).filter(Boolean);
 
-  quizState = { mode: savedMode, topic: savedTopic, questions, current: 0, score: 0, answered: false, wrongItems: [] };
+  quizState = { mode: savedMode, topics: savedTopics, questions, current: 0, score: 0, answered: false, wrongItems: [] };
   renderQuizQuestion();
 }
 
