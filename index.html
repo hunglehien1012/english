@@ -1141,6 +1141,7 @@ function mergeRemoteData(remote) {
   const defVocabIds = DEFAULT_VOCAB.map(v => v.id);
   if (Array.isArray(remote.vocab)) {
     remote.vocab.forEach(rv => {
+      rv = migrateVocab(rv);
       const idx = data.vocab.findIndex(v => v.id === rv.id);
       if (idx === -1) data.vocab.unshift(rv); else data.vocab[idx] = rv;
     });
@@ -1214,13 +1215,13 @@ const DEFAULT_TOPICS = [
 ];
 
 const DEFAULT_VOCAB = [
-  { id: '_0bb2xp4', word: 'Tedious tasks', phonetic: 'ˈtiː.di.əs', type: 'phrase', topic: 't2', meaning: 'Các công việc nhàm chán.', example: 'Data entry is one of the most tedious tasks in the office.' },
-  { id: '_lt35z4m', word: 'Repetitive/ Repeated/ Recurring tasks', phonetic: 'rɪˈpet.ə.tɪv / rɪˈpiː.tɪd / rɪˈkɜːr.ɪŋ tæsks', type: 'phrase', topic: 't2', meaning: 'Các công việc lặp đi lặp lại.', example: 'I automate repetitive tasks to save time and reduce human error.' },
-  { id: '_ki5xusk', word: 'Critical path', phonetic: 'ˈkrɪt.ɪ.kəl pæθ', type: 'phrase', topic: 't2', meaning: 'Chuỗi công việc dài nhất (The longest sequence of tasks).', example: 'We need to identify the critical path to optimize the execution time.' },
-  { id: '_wq3n96q', word: 'Intersection', phonetic: 'ˌɪn.t̬ɚˈsek.ʃən', type: 'noun', topic: 't4', meaning: 'Ngã tư', example: "We're going through an intersection" },
-  { id: '_q4rctmi', word: 'Fire hydrant', phonetic: 'ˈfaɪr ˌhaɪ.drənt', type: 'noun', topic: 't4', meaning: 'Trụ cứu hỏa', example: 'That red thing for fire is fire hydrant' },
-  { id: '_sxgtem9', word: 'Sidewalk', phonetic: 'ˈsaɪd.wɑːk', type: 'noun', topic: 't4', meaning: 'Vỉa hè', example: "Don't ride your bike on the sidewalk." },
-  { id: '_n1jcn0g', word: 'Argue', phonetic: 'ˈɑːrɡ.juː', type: 'verb', topic: 't1', meaning: 'Tranh cãi, tranh luận', example: 'They argued about money.' },
+  { id: '_0bb2xp4', word: 'Tedious tasks', phonetic: 'ˈtiː.di.əs', types: ['phrase'], topic: 't2', meanings: { phrase: 'Các công việc nhàm chán.' }, example: 'Data entry is one of the most tedious tasks in the office.' },
+  { id: '_lt35z4m', word: 'Repetitive/ Repeated/ Recurring tasks', phonetic: 'rɪˈpet.ə.tɪv / rɪˈpiː.tɪd / rɪˈkɜːr.ɪŋ tæsks', types: ['phrase'], topic: 't2', meanings: { phrase: 'Các công việc lặp đi lặp lại.' }, example: 'I automate repetitive tasks to save time and reduce human error.' },
+  { id: '_ki5xusk', word: 'Critical path', phonetic: 'ˈkrɪt.ɪ.kəl pæθ', types: ['phrase'], topic: 't2', meanings: { phrase: 'Chuỗi công việc dài nhất (longest sequence of tasks).' }, example: 'We need to identify the critical path to optimize execution time.' },
+  { id: '_wq3n96q', word: 'Intersection', phonetic: 'ˌɪn.t̬ɚˈsek.ʃən', types: ['noun'], topic: 't4', meanings: { noun: 'Ngã tư' }, example: "We're going through an intersection." },
+  { id: '_q4rctmi', word: 'Fire hydrant', phonetic: 'ˈfaɪr ˌhaɪ.drənt', types: ['noun'], topic: 't4', meanings: { noun: 'Trụ cứu hỏa' }, example: "Don't park in front of a fire hydrant." },
+  { id: '_sxgtem9', word: 'Sidewalk', phonetic: 'ˈsaɪd.wɑːk', types: ['noun'], topic: 't4', meanings: { noun: 'Vỉa hè' }, example: "Don't ride your bike on the sidewalk." },
+  { id: '_n1jcn0g', word: 'Argue', phonetic: 'ˈɑːrɡ.juː', types: ['verb', 'noun'], topic: 't1', meanings: { verb: 'Tranh cãi, tranh luận / Lập luận, biện hộ', noun: 'Cuộc tranh luận (ít dùng; thường dùng dạng argument)' }, example: 'They argued about money. / She argued her case well in court.' },
 ];
 
 function getDefaultStructs() {
@@ -1259,6 +1260,18 @@ function getDefaultStructs() {
   ];
 }
 
+// Migrate old-format vocab (type/meaning/example) → new format (types[]/meanings{}/example)
+function migrateVocab(v) {
+  if (Array.isArray(v.types)) return v; // already new format
+  const t = v.type || 'other';
+  return {
+    id: v.id, word: v.word, phonetic: v.phonetic || '', topic: v.topic || '',
+    types: [t],
+    meanings: { [t]: v.meaning || '' },
+    example: v.example || ''
+  };
+}
+
 function loadData() {
   try {
     const s = localStorage.getItem('englishvault_data');
@@ -1285,6 +1298,7 @@ function loadData() {
 
   // Always ensure all default vocab exist (merge by id)
   if (!data.vocab) data.vocab = [];
+  data.vocab = data.vocab.map(migrateVocab);
   DEFAULT_VOCAB.forEach(dv => {
     if (!data.vocab.find(v => v.id === dv.id)) data.vocab.push(dv);
   });
@@ -1300,6 +1314,20 @@ function getTopicName(id) { const t = getTopic(id); return t ? t.name : ''; }
 function getTopicColor(id) { const t = getTopic(id); return t ? t.color : '#5e5c74'; }
 
 function typeInfo(val) { return WORD_TYPES.find(t => t.val === val) || WORD_TYPES[5]; }
+
+// Get primary display meaning (join all meanings across types)
+function getCombinedMeaning(v) {
+  if (v.meanings && typeof v.meanings === 'object') {
+    return Object.values(v.meanings).filter(Boolean).join(' / ');
+  }
+  return v.meaning || '';
+}
+
+// Get meaning for a specific type
+function getMeaningForType(v, typeVal) {
+  if (v.meanings && v.meanings[typeVal]) return v.meanings[typeVal];
+  return getCombinedMeaning(v);
+}
 
 function toast(msg) {
   const el = document.getElementById('toast');
@@ -1361,7 +1389,7 @@ function renderTypeFilters() {
     style="background:var(--bg3);color:var(--text2);border-color:var(--border2)"
     onclick="setVocabType('all')">All Types</span>`;
   const typePills = WORD_TYPES.map(t => {
-    const count = data.vocab.filter(v => v.type === t.val).length;
+    const count = data.vocab.filter(v => Array.isArray(v.types) ? v.types.includes(t.val) : v.type === t.val).length;
     return `<span class="type-fpill ${activeVocabType === t.val ? 'active' : ''} ${t.cls}"
       style="background:${t.bg};color:${t.color};border-color:${t.border}"
       onclick="setVocabType('${t.val}')">
@@ -1378,8 +1406,10 @@ function renderVocab() {
   const q = (document.getElementById('vocabSearch').value || '').toLowerCase();
   const items = data.vocab.filter(v => {
     const tOk = activeVocabTopic === 'all' || v.topic === activeVocabTopic;
-    const tyOk = activeVocabType === 'all' || v.type === activeVocabType;
-    const sOk = !q || v.word.toLowerCase().includes(q) || (v.meaning||'').toLowerCase().includes(q);
+    const vTypes = Array.isArray(v.types) ? v.types : [v.type];
+    const tyOk = activeVocabType === 'all' || vTypes.includes(activeVocabType);
+    const combinedMeaning = getCombinedMeaning(v);
+    const sOk = !q || v.word.toLowerCase().includes(q) || combinedMeaning.toLowerCase().includes(q);
     return tOk && tyOk && sOk;
   });
   document.getElementById('vocab-count-label').textContent = items.length + ' words';
@@ -1391,9 +1421,19 @@ function renderVocab() {
     return;
   }
   g.innerHTML = items.map(v => {
-    const ti = typeInfo(v.type);
+    const vTypes = Array.isArray(v.types) ? v.types : [v.type || 'other'];
+    const primaryTi = typeInfo(vTypes[0]);
     const tc = v.topic ? getTopicColor(v.topic) : '#7c6ff7';
-    return `<div class="vocab-card" style="--card-accent:${ti.color || tc}">
+    // Build type badges + meanings
+    const sensesHtml = vTypes.map(tval => {
+      const ti = typeInfo(tval);
+      const m = getMeaningForType(v, tval);
+      return `<div style="margin-bottom:${vTypes.length > 1 ? 6 : 0}px">
+        <span class="vc-type ${ti.cls}" style="margin-bottom:4px"><span>${ti.icon||''}</span>${ti.label}</span>
+        ${m ? `<div class="vc-meaning" style="font-size:13px">${m}</div>` : ''}
+      </div>`;
+    }).join('');
+    return `<div class="vocab-card" style="--card-accent:${primaryTi.color || tc}">
       <div class="card-actions">
         <div class="icon-btn" onclick="openModal('vocab','${v.id}')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -1404,8 +1444,7 @@ function renderVocab() {
       </div>
       <div class="vc-word">${v.word}</div>
       ${v.phonetic ? `<div class="vc-phonetic">/${v.phonetic}/</div>` : ''}
-      <span class="vc-type ${ti.cls}"><span>${ti.icon||''}</span>${ti.label}</span>
-      <div class="vc-meaning">${v.meaning || ''}</div>
+      ${sensesHtml}
       ${v.example ? `<div class="vc-example">"${v.example}"</div>` : ''}
       ${v.topic ? `<span class="vc-topic" style="background:${tc}18;color:${tc}">
         <span style="width:5px;height:5px;border-radius:50%;background:${tc};display:inline-block"></span>
@@ -1705,12 +1744,12 @@ function startQuiz() {
     let choices, correctLabel, questionLabel;
 
     if (mode === 'vocab-meaning') {
-      correctLabel = item.meaning;
+      correctLabel = getCombinedMeaning(item);
       questionLabel = item.word;
-      choices = shuffle([item, ...distractors]).map(c => ({ id: c.id, label: c.meaning, correct: c.id === item.id }));
+      choices = shuffle([item, ...distractors]).map(c => ({ id: c.id, label: getCombinedMeaning(c), correct: c.id === item.id }));
     } else if (mode === 'meaning-vocab') {
       correctLabel = item.word;
-      questionLabel = item.meaning;
+      questionLabel = getCombinedMeaning(item);
       choices = shuffle([item, ...distractors]).map(c => ({ id: c.id, label: c.word, correct: c.id === item.id }));
     } else {
       correctLabel = item.name;
@@ -1745,7 +1784,7 @@ function renderQuizQuestion() {
         <div class="quiz-card">
           <div class="quiz-card-label">🔤 Fill in the missing syllable</div>
           <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px">
-            <div id="vn-meaning-text" style="font-size:17px;color:var(--text2);font-weight:500;filter:blur(6px);user-select:none;transition:filter 0.2s">${q.item.meaning}</div>
+            <div id="vn-meaning-text" style="font-size:17px;color:var(--text2);font-weight:500;filter:blur(6px);user-select:none;transition:filter 0.2s">${getCombinedMeaning(q.item)}</div>
             <button id="vn-eye-btn" onclick="toggleMeaningVisibility()" title="Show/hide Vietnamese meaning" style="background:none;border:none;cursor:pointer;color:var(--text3);padding:2px 4px;flex-shrink:0;transition:color 0.15s" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--text3)'">
               <svg id="vn-eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
             </button>
@@ -1887,7 +1926,7 @@ function checkSyllable() {
   const meaningVal = meaningInputEl ? meaningInputEl.value.trim().toLowerCase() : '';
   const q = quizState.questions[quizState.current];
   const correct = q.hidden.toLowerCase();
-  const correctMeaning = (q.item.meaning || '').trim().toLowerCase();
+  const correctMeaning = getCombinedMeaning(q.item).trim().toLowerCase();
   quizState.answered = true;
   input.disabled = true;
   if (meaningInputEl) meaningInputEl.disabled = true;
@@ -1908,13 +1947,13 @@ function checkSyllable() {
     input.style.borderColor = 'var(--green)';
     if (meaningInputEl) meaningInputEl.style.borderColor = 'var(--amber)';
     quizState.wrongItems.push(q.item);
-    fb.innerHTML = `✓ Syllable correct! But the Vietnamese meaning was: <strong>${q.item.meaning}</strong>`;
+    fb.innerHTML = `✓ Syllable correct! But the Vietnamese meaning was: <strong>${getCombinedMeaning(q.item)}</strong>`;
     fb.className = 'quiz-feedback show wrong';
   } else {
     input.style.borderColor = 'var(--red)';
     if (meaningInputEl) meaningInputEl.style.borderColor = syllableOk ? 'var(--amber)' : 'var(--red)';
     quizState.wrongItems.push(q.item);
-    fb.innerHTML = `✗ Incorrect! Missing syllable: <strong>${q.hidden}</strong> → Full word: <strong>${q.fullPhrase}</strong><br><span style="font-size:12px">Vietnamese meaning: <strong>${q.item.meaning}</strong></span>`;
+    fb.innerHTML = `✗ Incorrect! Missing syllable: <strong>${q.hidden}</strong> → Full word: <strong>${q.fullPhrase}</strong><br><span style="font-size:12px">Vietnamese meaning: <strong>${getCombinedMeaning(q.item)}</strong></span>`;
     fb.className = 'quiz-feedback show wrong';
   }
   // Remove skip button, add next button
@@ -1977,10 +2016,10 @@ function retryQuiz() {
     const distractors = shuffle(others).slice(0, 3);
     let choices, correctLabel, questionLabel;
     if (savedMode === 'vocab-meaning') {
-      correctLabel = item.meaning; questionLabel = item.word;
-      choices = shuffle([item, ...distractors]).map(c => ({ id: c.id, label: c.meaning, correct: c.id === item.id }));
+      correctLabel = getCombinedMeaning(item); questionLabel = item.word;
+      choices = shuffle([item, ...distractors]).map(c => ({ id: c.id, label: getCombinedMeaning(c), correct: c.id === item.id }));
     } else if (savedMode === 'meaning-vocab') {
-      correctLabel = item.word; questionLabel = item.meaning;
+      correctLabel = item.word; questionLabel = getCombinedMeaning(item);
       choices = shuffle([item, ...distractors]).map(c => ({ id: c.id, label: c.word, correct: c.id === item.id }));
     } else {
       correctLabel = item.name; questionLabel = item.pattern || item.name;
@@ -2023,7 +2062,7 @@ function renderQuizResult() {
       ${wrongItems.map(w => `
         <div class="quiz-bd-row">
           <span>${'word' in w ? w.word : w.name}</span>
-          <span style="color:var(--text3)">${'meaning' in w ? w.meaning : (w.pattern || '')}</span>
+          <span style="color:var(--text3)">${'meanings' in w || 'meaning' in w ? getCombinedMeaning(w) : (w.pattern || '')}</span>
         </div>`).join('')}
     </div>` : '';
 
@@ -2137,8 +2176,8 @@ function renderWordTypes() {
   if (!el) return;
 
   const cardsHtml = WORD_TYPES.map(t => {
-    const count = data.vocab.filter(v => v.type === t.val).length;
-    const myWords = data.vocab.filter(v => v.type === t.val).slice(0, 6);
+    const count = data.vocab.filter(v => Array.isArray(v.types) ? v.types.includes(t.val) : v.type === t.val).length;
+    const myWords = data.vocab.filter(v => Array.isArray(v.types) ? v.types.includes(t.val) : v.type === t.val).slice(0, 6);
     const tipsHtml = t.tips.map(tip =>
       `<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:5px">
         <span style="color:${t.color};font-size:12px;margin-top:2px;flex-shrink:0">▸</span>
@@ -2197,16 +2236,28 @@ function openModal(mode, id) {
 
   if (mode === 'vocab') {
     const v = id ? data.vocab.find(x => x.id === id) : {};
-    const typeOpts = WORD_TYPES.map(t => `<option value="${t.val}" ${(v && v.type) === t.val ? 'selected' : ''}>${t.label}</option>`).join('');
+    const vTypes = Array.isArray(v && v.types) ? v.types : (v && v.type ? [v.type] : []);
+    const vMeanings = (v && v.meanings) ? v.meanings : (v && v.meaning ? { [v.type || 'other']: v.meaning } : {});
+    const typeCheckboxes = WORD_TYPES.map(t => `
+      <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:4px 10px;border-radius:20px;border:1px solid ${vTypes.includes(t.val) ? t.border : 'var(--border)'};background:${vTypes.includes(t.val) ? t.bg : 'transparent'};transition:all 0.15s" id="typelabel-${t.val}">
+        <input type="checkbox" value="${t.val}" ${vTypes.includes(t.val) ? 'checked' : ''} style="display:none" onchange="onTypeCheckboxChange()">
+        <span style="font-size:10px;font-weight:700;color:${t.color}">${t.icon} ${t.label}</span>
+      </label>`).join('');
+    const meaningsHtml = WORD_TYPES.filter(t => vTypes.includes(t.val)).map(t =>
+      `<div class="form-row meaning-row" id="meaning-row-${t.val}">
+        <label class="form-label" style="color:${t.color}">${t.icon} ${t.label} — Nghĩa tiếng Việt *</label>
+        <textarea class="form-textarea" id="f-meaning-${t.val}" placeholder="Nhập nghĩa (${t.label})...">${vMeanings[t.val] || ''}</textarea>
+      </div>`).join('');
     document.getElementById('modalBody').innerHTML = `
       <div class="form-row"><label class="form-label">Word *</label><input class="form-input" type="text" id="f-word" value="${(v && v.word) || ''}" placeholder="Enter English word..."></div>
       <div class="form-row"><label class="form-label">Phonetic</label><input class="form-input" type="text" id="f-phonetic" value="${(v && v.phonetic) || ''}" placeholder="e.g. həˈloʊ"></div>
-      <div class="form-2col">
-        <div class="form-row"><label class="form-label">Word Type</label><select class="form-select" id="f-type">${typeOpts}</select></div>
-        <div class="form-row"><label class="form-label">Topic</label><select class="form-select" id="f-topic"><option value="">None</option>${topicOpts}</select></div>
+      <div class="form-row"><label class="form-label">Topic</label><select class="form-select" id="f-topic"><option value="">None</option>${topicOpts}</select></div>
+      <div class="form-row">
+        <label class="form-label">Word Type (chọn một hoặc nhiều)</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px" id="typeCheckboxGroup">${typeCheckboxes}</div>
       </div>
-      <div class="form-row"><label class="form-label">Vietnamese Meaning *</label><textarea class="form-textarea" id="f-meaning" placeholder="Enter meaning...">${(v && v.meaning) || ''}</textarea></div>
-      <div class="form-row"><label class="form-label">Example Sentence</label><textarea class="form-textarea" id="f-example" placeholder="Example sentence...">${(v && v.example) || ''}</textarea></div>`;
+      <div id="meaningsContainer">${meaningsHtml}</div>
+      <div class="form-row"><label class="form-label">Example Sentence (dùng chung)</label><textarea class="form-textarea" id="f-example" placeholder="Ví dụ câu...">${(v && v.example) || ''}</textarea></div>`;
     if (v && v.topic) setTimeout(() => { const s = document.getElementById('f-topic'); if (s) s.value = v.topic; }, 10);
   } else if (mode === 'struct') {
     const s = id ? data.structs.find(x => x.id === id) : {};
@@ -2234,6 +2285,33 @@ function openModal(mode, id) {
   }
 }
 
+function onTypeCheckboxChange() {
+  const container = document.getElementById('meaningsContainer');
+  if (!container) return;
+  // Collect current meaning values before re-render
+  const currentMeanings = {};
+  WORD_TYPES.forEach(t => {
+    const el = document.getElementById('f-meaning-' + t.val);
+    if (el) currentMeanings[t.val] = el.value;
+  });
+  // Get checked types
+  const checked = [...document.querySelectorAll('#typeCheckboxGroup input[type=checkbox]:checked')].map(cb => cb.value);
+  // Update label styles
+  WORD_TYPES.forEach(t => {
+    const lbl = document.getElementById('typelabel-' + t.val);
+    if (!lbl) return;
+    const isChecked = checked.includes(t.val);
+    lbl.style.borderColor = isChecked ? t.border : 'var(--border)';
+    lbl.style.background = isChecked ? t.bg : 'transparent';
+  });
+  // Re-render meaning rows
+  container.innerHTML = WORD_TYPES.filter(t => checked.includes(t.val)).map(t =>
+    `<div class="form-row meaning-row" id="meaning-row-${t.val}">
+      <label class="form-label" style="color:${t.color}">${t.icon} ${t.label} — Nghĩa tiếng Việt *</label>
+      <textarea class="form-textarea" id="f-meaning-${t.val}" placeholder="Nhập nghĩa (${t.label})...">${currentMeanings[t.val] || ''}</textarea>
+    </div>`).join('');
+}
+
 function selectColor(c) {
   document.getElementById('f-color').value = c;
   document.querySelectorAll('.color-swatch').forEach(d => d.classList.toggle('selected', d.dataset.color === c));
@@ -2247,9 +2325,24 @@ function closeModal() {
 function saveItem() {
   if (modalMode === 'vocab') {
     const word = document.getElementById('f-word').value.trim();
-    const meaning = document.getElementById('f-meaning').value.trim();
-    if (!word || !meaning) { alert('Please enter the word and its meaning!'); return; }
-    const item = { id: editingId || uid(), word, phonetic: document.getElementById('f-phonetic').value.trim(), type: document.getElementById('f-type').value, topic: document.getElementById('f-topic').value, meaning, example: document.getElementById('f-example').value.trim() };
+    if (!word) { alert('Please enter the word!'); return; }
+    const types = [...document.querySelectorAll('#typeCheckboxGroup input[type=checkbox]:checked')].map(cb => cb.value);
+    if (!types.length) { alert('Please select at least one word type!'); return; }
+    const meanings = {};
+    let hasMeaning = false;
+    types.forEach(tval => {
+      const el = document.getElementById('f-meaning-' + tval);
+      if (el) { meanings[tval] = el.value.trim(); if (meanings[tval]) hasMeaning = true; }
+    });
+    if (!hasMeaning) { alert('Please enter at least one meaning!'); return; }
+    const item = {
+      id: editingId || uid(), word,
+      phonetic: document.getElementById('f-phonetic').value.trim(),
+      types,
+      meanings,
+      topic: document.getElementById('f-topic').value,
+      example: document.getElementById('f-example').value.trim()
+    };
     if (editingId) { const i = data.vocab.findIndex(x => x.id === editingId); data.vocab[i] = item; }
     else data.vocab.unshift(item);
     toast('✓ Vocabulary saved');
@@ -2372,8 +2465,8 @@ function toggleTheme() {
 }
 
 function applyTheme() {
-  let theme = 'dark';
-  try { theme = localStorage.getItem('englishvault_theme') || 'dark'; } catch(e) {}
+  let theme = 'light';
+  try { theme = localStorage.getItem('englishvault_theme') || 'light'; } catch(e) {}
   if (theme === 'light') {
     document.documentElement.classList.add('light');
     document.getElementById('themeTrack').classList.add('on');
