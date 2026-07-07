@@ -1697,6 +1697,20 @@
             <span class="nav-full">Vocabulary</span
             ><span class="nav-short">Vocab</span>
           </button>
+          <button class="nav-item" id="nav-sentences" data-panel="sentences">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+            >
+              <path
+                d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"
+              />
+            </svg>
+            <span class="nav-full">Communication</span
+            ><span class="nav-short">Sentences</span>
+          </button>
           <button class="nav-item" id="nav-struct" data-panel="struct">
             <svg
               viewBox="0 0 24 24"
@@ -1767,6 +1781,10 @@
           <div class="sidebar-stat">
             <span class="sidebar-stat-label">Vocabulary</span>
             <span class="sidebar-stat-val" id="ss-vocab">0</span>
+          </div>
+          <div class="sidebar-stat">
+            <span class="sidebar-stat-label">Sentences</span>
+            <span class="sidebar-stat-val" id="ss-sentences">0</span>
           </div>
           <div class="sidebar-stat">
             <span class="sidebar-stat-label">Structures</span>
@@ -1942,6 +1960,51 @@
           </div>
         </div>
 
+        <!-- SENTENCES PANEL -->
+        <div class="panel" id="panel-sentences">
+          <div class="topbar">
+            <div class="page-title">
+              Communication Sentences
+              <span id="sentence-count-label">0 sentences</span>
+            </div>
+            <div class="topbar-actions">
+              <div class="search-wrap">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="M21 21l-4.35-4.35" />
+                </svg>
+                <input
+                  class="search-input"
+                  type="text"
+                  placeholder="Search sentences..."
+                  id="sentenceSearch"
+                  oninput="renderSentences()"
+                />
+              </div>
+              <button class="btn btn-primary" onclick="openModal('sentence')">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                >
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+                Add Sentence
+              </button>
+            </div>
+          </div>
+          <div class="content">
+            <div class="topic-filters" id="sentenceTopicFilters"></div>
+            <div id="sentenceList"></div>
+          </div>
+        </div>
+
         <!-- WORD TYPES PANEL -->
         <div class="panel" id="panel-wordtypes">
           <div class="topbar">
@@ -2084,10 +2147,11 @@
 
     <script>
       // ─── STATE ───────────────────────────────────────────
-      let data = { vocab: [], structs: [], topics: [] };
+      let data = { vocab: [], structs: [], topics: [], sentences: [] };
       let activeVocabTopic = "all";
       let activeVocabType = "all";
       let activeStructTopic = "all";
+      let activeSentenceTopic = "all";
       let editingId = null;
       let modalMode = null;
 
@@ -2422,23 +2486,42 @@
       async function sbPushData() {
         const defStructIds = getDefaultStructs().map((s) => s.id);
         const defTopicIds = DEFAULT_TOPICS.map((t) => t.id);
-        const payload = {
+        const defSentenceIds = DEFAULT_SENTENCES.map((s) => s.id);
+        const basePayload = {
           vocab: data.vocab,
           structs: data.structs.filter((s) => !defStructIds.includes(s.id)),
           topics: data.topics.filter((t) => !defTopicIds.includes(t.id)),
           updated_at: new Date().toISOString(),
         };
+        const payload = {
+          ...basePayload,
+          sentences: (data.sentences || []).filter(
+            (s) => !defSentenceIds.includes(s.id),
+          ),
+        };
         try {
-          const res = await sbFetch("/rest/v1/englishvault?id=eq.shared", {
+          let res = await sbFetch("/rest/v1/englishvault?id=eq.shared", {
             method: "PATCH",
             body: JSON.stringify(payload),
           });
+          if (!res.ok) {
+            // Remote table may not have a "sentences" column yet — retry without it
+            res = await sbFetch("/rest/v1/englishvault?id=eq.shared", {
+              method: "PATCH",
+              body: JSON.stringify(basePayload),
+            });
+          }
           const json = await res.json();
           if (!json || json.length === 0) {
-            await sbFetch("/rest/v1/englishvault", {
+            let insRes = await sbFetch("/rest/v1/englishvault", {
               method: "POST",
               body: JSON.stringify({ id: "shared", ...payload }),
             });
+            if (!insRes.ok)
+              await sbFetch("/rest/v1/englishvault", {
+                method: "POST",
+                body: JSON.stringify({ id: "shared", ...basePayload }),
+              });
           }
         } catch (e) {
           setSbStatus("error", "⚠ Sync error — check connection");
@@ -2459,6 +2542,7 @@
         const defStructIds = getDefaultStructs().map((s) => s.id);
         const defTopicIds = DEFAULT_TOPICS.map((t) => t.id);
         const defVocabIds = DEFAULT_VOCAB.map((v) => v.id);
+        const defSentenceIds = DEFAULT_SENTENCES.map((s) => s.id);
         if (Array.isArray(remote.vocab)) {
           remote.vocab.forEach((rv) => {
             rv = migrateVocab(rv);
@@ -2498,6 +2582,22 @@
             (t) => defTopicIds.includes(t.id) || remoteTopicIds.includes(t.id),
           );
         }
+        if (Array.isArray(remote.sentences)) {
+          if (!data.sentences) data.sentences = [];
+          remote.sentences.forEach((rs) => {
+            if (!defSentenceIds.includes(rs.id)) {
+              const idx = data.sentences.findIndex((s) => s.id === rs.id);
+              if (idx === -1) data.sentences.push(rs);
+              else data.sentences[idx] = rs;
+            }
+          });
+          const remoteSentenceIds = remote.sentences.map((s) => s.id);
+          data.sentences = data.sentences.filter(
+            (s) =>
+              defSentenceIds.includes(s.id) ||
+              remoteSentenceIds.includes(s.id),
+          );
+        }
         try {
           localStorage.setItem(
             "englishvault_data",
@@ -2505,6 +2605,7 @@
               vocab: data.vocab,
               structs: data.structs,
               topics: data.topics,
+              sentences: data.sentences,
             }),
           );
         } catch (e) {}
@@ -2517,9 +2618,7 @@
           '<span class="sb-spinner"></span> Connecting...',
         );
         try {
-          const res = await sbFetch(
-            "/rest/v1/englishvault?id=eq.shared&select=vocab,structs,topics,updated_at",
-          );
+          const res = await sbFetch("/rest/v1/englishvault?id=eq.shared&select=*");
           if (!res.ok) throw new Error("HTTP " + res.status);
           const rows = await res.json();
           if (rows && rows.length > 0) mergeRemoteData(rows[0]);
@@ -2529,9 +2628,7 @@
           let lastUpdated = null;
           setInterval(async () => {
             try {
-              const r = await sbFetch(
-                "/rest/v1/englishvault?id=eq.shared&select=vocab,structs,topics,updated_at",
-              );
+              const r = await sbFetch("/rest/v1/englishvault?id=eq.shared&select=*");
               if (!r.ok) return;
               const rows = await r.json();
               if (!rows || !rows.length) return;
@@ -2633,6 +2730,30 @@
           },
           example:
             "They argued about money. / She argued her case well in court.",
+        },
+      ];
+
+      const DEFAULT_SENTENCES = [
+        {
+          id: "_sen001",
+          en: "Could you give me a hand with this?",
+          vi: "Bạn có thể giúp tôi việc này được không?",
+          topic: "t1",
+          note: "Nhờ giúp đỡ một cách lịch sự.",
+        },
+        {
+          id: "_sen002",
+          en: "I'm running a bit late, I'll be there in 10 minutes.",
+          vi: "Tôi sẽ đến trễ một chút, tôi sẽ tới trong 10 phút nữa.",
+          topic: "t1",
+          note: "Báo trễ hẹn.",
+        },
+        {
+          id: "_sen003",
+          en: "Let's grab a coffee sometime.",
+          vi: "Khi nào đó mình đi uống cà phê nhé.",
+          topic: "t1",
+          note: "Rủ rê thân mật.",
         },
       ];
 
@@ -2993,6 +3114,13 @@
           if (!data.vocab.find((v) => v.id === dv.id)) data.vocab.push(dv);
         });
 
+        // Always ensure all default sentences exist (merge by id)
+        if (!data.sentences) data.sentences = [];
+        DEFAULT_SENTENCES.forEach((ds) => {
+          if (!data.sentences.find((s) => s.id === ds.id))
+            data.sentences.push(ds);
+        });
+
         try {
           localStorage.setItem(
             "englishvault_data",
@@ -3000,6 +3128,7 @@
               vocab: data.vocab,
               structs: data.structs,
               topics: data.topics,
+              sentences: data.sentences,
             }),
           );
         } catch (e) {}
@@ -3081,6 +3210,9 @@
         document.getElementById("ss-vocab").textContent = data.vocab.length;
         document.getElementById("ss-struct").textContent = data.structs.length;
         document.getElementById("ss-topics").textContent = data.topics.length;
+        document.getElementById("ss-sentences").textContent = (
+          data.sentences || []
+        ).length;
       }
 
       // ─── TOPIC FILTERS ───────────────────────────────────
@@ -3358,6 +3490,78 @@
           .join("");
       }
 
+      // ─── SENTENCES ───────────────────────────────────────
+      function setSentenceTopic(id) {
+        activeSentenceTopic = id;
+        renderSentences();
+      }
+
+      function renderSentences() {
+        const filterEl = document.getElementById("sentenceTopicFilters");
+        if (!filterEl) return;
+        renderTopicFilters(
+          "sentenceTopicFilters",
+          activeSentenceTopic,
+          "setSentenceTopic",
+        );
+        const q = (
+          document.getElementById("sentenceSearch").value || ""
+        ).toLowerCase();
+        const items = (data.sentences || []).filter((s) => {
+          const tOk =
+            activeSentenceTopic === "all" || s.topic === activeSentenceTopic;
+          const sOk =
+            !q ||
+            s.en.toLowerCase().includes(q) ||
+            (s.vi || "").toLowerCase().includes(q);
+          return tOk && sOk;
+        });
+        document.getElementById("sentence-count-label").textContent =
+          items.length + " sentences";
+        const el = document.getElementById("sentenceList");
+        if (!items.length) {
+          el.innerHTML = `<div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+      <p>No sentences yet. Add your first daily conversation sentence!</p></div>`;
+          return;
+        }
+        el.innerHTML = items
+          .map((s) => {
+            const tc = s.topic ? getTopicColor(s.topic) : "#7c6ff7";
+            return `<div class="struct-card">
+      <div class="card-actions">
+        <div class="icon-btn speak-btn" onclick="speak('${s.en.replace(/'/g, "\\'")}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+        </div>
+        <div class="icon-btn" onclick="openModal('sentence','${s.id}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </div>
+        <div class="icon-btn del" onclick="deleteItem('sentence','${s.id}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+        </div>
+      </div>
+      <div class="sc-name">${s.en}</div>
+      <div class="sc-meaning" style="margin-bottom:${s.note ? 6 : 8}px">${s.vi}</div>
+      ${
+        s.note
+          ? `<div style="display:flex;gap:8px;align-items:flex-start;background:var(--bg3);border-radius:var(--radius-sm);padding:8px 12px;margin-top:4px;margin-bottom:8px">
+        <span style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;flex-shrink:0;margin-top:2px">TIP</span>
+        <div class="sc-example" style="margin:0;font-style:italic;color:var(--text2)">${s.note}</div>
+      </div>`
+          : ""
+      }
+      ${
+        s.topic
+          ? `<span class="vc-topic" style="background:${tc}18;color:${tc};display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:20px">
+        <span style="width:5px;height:5px;border-radius:50%;background:${tc};display:inline-block"></span>
+        ${getTopicName(s.topic)}</span>`
+          : ""
+      }
+    </div>`;
+          })
+          .join("");
+      }
+
       // ─── TOPICS ──────────────────────────────────────────
       function renderTopics() {
         const g = document.getElementById("topicGrid");
@@ -3471,6 +3675,11 @@
           <div class="qoc-icon">📐</div>
           <div class="qoc-label">Structures</div>
           <div class="qoc-desc">Guess structure name from pattern</div>
+        </div>
+        <div class="quiz-option-card" onclick="selectQuizMode('sentence',this)">
+          <div class="qoc-icon">💬</div>
+          <div class="qoc-label">Dịch câu (VI → EN)</div>
+          <div class="qoc-desc">Xem câu tiếng Việt, gõ câu tiếng Anh tương ứng</div>
         </div>
         <div class="quiz-option-card" onclick="selectQuizMode('fill',this)">
           <div class="qoc-icon">✍️</div>
@@ -3645,6 +3854,14 @@
             alert("You need at least 2 structures to start a quiz!");
             return;
           }
+        } else if (mode === "sentence") {
+          pool = (data.sentences || []).filter(topicMatch);
+          if (pool.length < 1) {
+            alert(
+              "Bạn cần ít nhất 1 câu giao tiếp để bắt đầu quiz! Hãy thêm câu ở mục Communication.",
+            );
+            return;
+          }
         } else if (mode === "syllable") {
           const raw = data.vocab.filter(topicMatch);
           pool = raw.filter((v) => {
@@ -3685,6 +3902,9 @@
             }
             if (mode === "fill") {
               return { item, type: "fill", answer: item.word };
+            }
+            if (mode === "sentence") {
+              return { item, type: "sentence", answer: item.en };
             }
             // Build distractors
             const others = pool.filter((p) => p.id !== item.id);
@@ -3823,6 +4043,34 @@
               document.getElementById("fillInput").focus(),
             50,
           );
+        } else if (q.type === "sentence") {
+          document.getElementById("quizContent").innerHTML = `
+      <div class="quiz-container">
+        <div class="quiz-meta">
+          <span>Question ${current + 1} / ${questions.length}</span>
+          <span style="color:var(--green)">✓ ${quizState.score} correct</span>
+        </div>
+        <div class="quiz-progress-bar"><div class="quiz-progress-fill" style="width:${progress}%"></div></div>
+        <div class="quiz-card">
+          <div class="quiz-card-label">💬 Dịch câu sau sang tiếng Anh</div>
+          <div class="quiz-card-word" style="font-size:18px;color:var(--text2)">${q.item.vi}</div>
+          ${q.item.note ? `<div class="quiz-card-hint">Gợi ý: ${q.item.note}</div>` : ""}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
+          <textarea class="form-textarea" id="sentenceInput" placeholder="Type the English sentence..." style="min-height:70px" onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();checkSentence();}"></textarea>
+          <button class="btn btn-primary" onclick="checkSentence()" style="align-self:flex-end">Check</button>
+        </div>
+        <div class="quiz-feedback" id="quizFeedback"></div>
+        <div style="text-align:right">
+          <button class="btn btn-ghost" onclick="skipQuestion()">Skip →</button>
+        </div>
+      </div>`;
+          setTimeout(
+            () =>
+              document.getElementById("sentenceInput") &&
+              document.getElementById("sentenceInput").focus(),
+            50,
+          );
         } else {
           const modeLabels = {
             "vocab-meaning": "Choose the correct meaning",
@@ -3911,6 +4159,85 @@
         nb.style.textAlign = "right";
         nb.innerHTML = `<button class="btn btn-primary" onclick="nextQuestion()">Next →</button>`;
         wrap.appendChild(nb);
+      }
+
+      // ─── SENTENCE MATCHING HELPERS ────────────────────────
+      function normalizeSentence(s) {
+        return (s || "")
+          .toLowerCase()
+          .normalize("NFC")
+          .replace(/[.,!?;:"“”'’`]/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+
+      function levenshtein(a, b) {
+        const m = a.length,
+          n = b.length;
+        if (m === 0) return n;
+        if (n === 0) return m;
+        const dp = new Array(n + 1);
+        for (let j = 0; j <= n; j++) dp[j] = j;
+        for (let i = 1; i <= m; i++) {
+          let prev = dp[0];
+          dp[0] = i;
+          for (let j = 1; j <= n; j++) {
+            const temp = dp[j];
+            dp[j] =
+              a[i - 1] === b[j - 1]
+                ? prev
+                : 1 + Math.min(prev, dp[j], dp[j - 1]);
+            prev = temp;
+          }
+        }
+        return dp[n];
+      }
+
+      function sentenceSimilarity(a, b) {
+        const na = normalizeSentence(a),
+          nb = normalizeSentence(b);
+        if (!na && !nb) return 1;
+        const dist = levenshtein(na, nb);
+        const maxLen = Math.max(na.length, nb.length) || 1;
+        return 1 - dist / maxLen;
+      }
+
+      function checkSentence() {
+        if (quizState.answered) return;
+        const input = document.getElementById("sentenceInput");
+        if (!input) return;
+        const val = input.value.trim();
+        const q = quizState.questions[quizState.current];
+        const sim = sentenceSimilarity(val, q.answer);
+        quizState.answered = true;
+        input.disabled = true;
+        const fb = document.getElementById("quizFeedback");
+
+        if (sim >= 0.97) {
+          quizState.score++;
+          input.style.borderColor = "var(--green)";
+          fb.textContent = "✓ Correct!";
+          fb.className = "quiz-feedback show correct";
+        } else if (sim >= 0.8) {
+          quizState.score += 0.5;
+          input.style.borderColor = "var(--amber)";
+          quizState.wrongItems.push(q.item);
+          fb.innerHTML = `〜 Almost right! Reference answer: <strong>${q.answer}</strong>`;
+          fb.className = "quiz-feedback show wrong";
+        } else {
+          input.style.borderColor = "var(--red)";
+          quizState.wrongItems.push(q.item);
+          fb.innerHTML = `✗ Wrong! Reference answer: <strong>${q.answer}</strong>`;
+          fb.className = "quiz-feedback show wrong";
+        }
+        const wrap = fb.parentElement;
+        const btn = wrap.querySelector(".btn-ghost");
+        if (btn) btn.remove();
+        const nb2 = document.createElement("div");
+        nb2.style.textAlign = "right";
+        nb2.style.marginTop = "8px";
+        nb2.innerHTML = `<button class="btn btn-primary" onclick="nextQuestion()">Next →</button>`;
+        wrap.appendChild(nb2);
       }
 
       function checkSyllable() {
@@ -4007,6 +4334,12 @@
             alert("You need at least 2 structures!");
             return;
           }
+        } else if (savedMode === "sentence") {
+          pool = (data.sentences || []).filter(topicMatch);
+          if (pool.length < 1) {
+            alert("Bạn cần ít nhất 1 câu giao tiếp để luyện tập!");
+            return;
+          }
         } else if (savedMode === "syllable") {
           const raw = data.vocab.filter(topicMatch);
           pool = raw.filter((v) => {
@@ -4045,6 +4378,8 @@
             }
             if (savedMode === "fill")
               return { item, type: "fill", answer: item.word };
+            if (savedMode === "sentence")
+              return { item, type: "sentence", answer: item.en };
             const others = pool.filter((p) => p.id !== item.id);
             const distractors = shuffle(others).slice(0, 3);
             let choices, correctLabel, questionLabel;
@@ -4139,8 +4474,8 @@
         .map(
           (w) => `
         <div class="quiz-bd-row">
-          <span>${"word" in w ? w.word : w.name}</span>
-          <span style="color:var(--text3)">${"meanings" in w || "meaning" in w ? getCombinedMeaning(w) : w.pattern || ""}</span>
+          <span>${"en" in w ? w.en : "word" in w ? w.word : w.name}</span>
+          <span style="color:var(--text3)">${"en" in w ? w.vi : "meanings" in w || "meaning" in w ? getCombinedMeaning(w) : w.pattern || ""}</span>
         </div>`,
         )
         .join("")}
@@ -4378,6 +4713,7 @@
           vocab: id ? "Edit Vocabulary" : "Add Vocabulary",
           struct: id ? "Edit Sentence Structure" : "Add Sentence Structure",
           topic: id ? "Edit Topic" : "Add Topic",
+          sentence: id ? "Edit Sentence" : "Add Communication Sentence",
         };
         document.getElementById("modalTitle").textContent = titles[mode];
         const topicOpts = data.topics
@@ -4442,6 +4778,18 @@
           if (s && s.topic)
             setTimeout(() => {
               const el = document.getElementById("f-stopic");
+              if (el) el.value = s.topic;
+            }, 10);
+        } else if (mode === "sentence") {
+          const s = id ? data.sentences.find((x) => x.id === id) : {};
+          document.getElementById("modalBody").innerHTML = `
+      <div class="form-row"><label class="form-label">English Sentence *</label><textarea class="form-textarea" id="f-sen-en" placeholder="e.g. Could you give me a hand with this?">${(s && s.en) || ""}</textarea></div>
+      <div class="form-row"><label class="form-label">Nghĩa tiếng Việt *</label><textarea class="form-textarea" id="f-sen-vi" placeholder="e.g. Bạn có thể giúp tôi việc này được không?">${(s && s.vi) || ""}</textarea></div>
+      <div class="form-row"><label class="form-label">Topic</label><select class="form-select" id="f-sen-topic"><option value="">None</option>${topicOpts}</select></div>
+      <div class="form-row"><label class="form-label">Ghi chú (ngữ cảnh sử dụng, tùy chọn)</label><textarea class="form-textarea" id="f-sen-note" placeholder="e.g. Nhờ giúp đỡ một cách lịch sự.">${(s && s.note) || ""}</textarea></div>`;
+          if (s && s.topic)
+            setTimeout(() => {
+              const el = document.getElementById("f-sen-topic");
               if (el) el.value = s.topic;
             }, 10);
         } else {
@@ -4571,6 +4919,30 @@
             data.structs[i] = item;
           } else data.structs.unshift(item);
           toast("✓ Structure saved");
+        } else if (modalMode === "sentence") {
+          const en = document.getElementById("f-sen-en").value.trim();
+          const vi = document.getElementById("f-sen-vi").value.trim();
+          if (!en) {
+            alert("Please enter the English sentence!");
+            return;
+          }
+          if (!vi) {
+            alert("Vui lòng nhập nghĩa tiếng Việt!");
+            return;
+          }
+          const item = {
+            id: editingId || uid(),
+            en,
+            vi,
+            topic: document.getElementById("f-sen-topic").value,
+            note: document.getElementById("f-sen-note").value.trim(),
+          };
+          if (!data.sentences) data.sentences = [];
+          if (editingId) {
+            const i = data.sentences.findIndex((x) => x.id === editingId);
+            data.sentences[i] = item;
+          } else data.sentences.unshift(item);
+          toast("✓ Sentence saved");
         } else {
           const name = document.getElementById("f-tname").value.trim();
           if (!name) {
@@ -4598,12 +4970,15 @@
           vocab: "vocabulary item",
           struct: "structure",
           topic: "topic",
+          sentence: "sentence",
         };
         if (!confirm(`Delete this ${labels[type]}?`)) return;
         if (type === "vocab")
           data.vocab = data.vocab.filter((x) => x.id !== id);
         else if (type === "struct")
           data.structs = data.structs.filter((x) => x.id !== id);
+        else if (type === "sentence")
+          data.sentences = (data.sentences || []).filter((x) => x.id !== id);
         else data.topics = data.topics.filter((x) => x.id !== id);
         saveData();
         renderAll();
@@ -4619,22 +4994,12 @@
 
       // ─── EXPORT / IMPORT ─────────────────────────────────
       function exportData() {
-        const exportObj = {
-          vocab: data.vocab,
-          structs: data.structs.filter(
-            (s) => !s.id.startsWith("ss") && !s.id.startsWith("ts"),
-          ), // only user-added
-          topics: data.topics.filter(
-            (t) => !["t1", "t2", "t3", "t4", "t5"].includes(t.id),
-          ), // only user-added
-          exportedAt: new Date().toISOString(),
-          version: 1,
-        };
-        // Include ALL user data (vocab + custom structs/topics)
+        // Include ALL user data (vocab + custom structs/topics/sentences)
         const fullExport = {
           vocab: data.vocab,
           structs: data.structs,
           topics: data.topics,
+          sentences: data.sentences || [],
           exportedAt: new Date().toISOString(),
         };
         const blob = new Blob([JSON.stringify(fullExport, null, 2)], {
@@ -4656,7 +5021,7 @@
         reader.onload = function (e) {
           try {
             const imported = JSON.parse(e.target.result);
-            if (!imported.vocab && !imported.structs) {
+            if (!imported.vocab && !imported.structs && !imported.sentences) {
               alert("Invalid file format.");
               return;
             }
@@ -4687,10 +5052,21 @@
                   data.topics.push(t);
               });
             }
+            // Merge sentences
+            let addedSentences = 0;
+            if (imported.sentences) {
+              if (!data.sentences) data.sentences = [];
+              imported.sentences.forEach((s) => {
+                if (!data.sentences.find((x) => x.id === s.id)) {
+                  data.sentences.unshift(s);
+                  addedSentences++;
+                }
+              });
+            }
             saveData();
             renderAll();
             toast(
-              `✓ Imported: ${addedVocab} words, ${addedStructs} structures`,
+              `✓ Imported: ${addedVocab} words, ${addedStructs} structures, ${addedSentences} sentences`,
             );
           } catch (err) {
             alert(
@@ -4743,6 +5119,7 @@
         renderVocab();
         renderStructs();
         renderTopics();
+        renderSentences();
         if (
           document
             .getElementById("panel-wordtypes")
